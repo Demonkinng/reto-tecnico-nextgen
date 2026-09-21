@@ -9,11 +9,11 @@ plataforma orientada a procesar transacciones en tiempo real y ofrecer recomenda
 
 | Componente | Tecnología | Justificación |
 |---|---|---|
-| API transaccional | Python + FastAPI | I/O-bound, concurrencia con asyncio, tipado con Pydantic, fácil de instrumentar. |
-| Base de datos transaccional | PostgreSQL | ACID fuerte, índices, particionamiento, MVCC, soporte de observabilidad (`pg_stat_activity`, `pg_locks`). |
-| Patrón de integración con Bancs | Workers batch | Evita saturar el core legado con escritura directa. |
+| API transaccional | Python + FastAPI | Contratos claros con Pydantic, documentación OpenAPI y handlers síncronos que FastAPI ejecuta en su pool de hilos para no bloquear el servidor. |
+| Base de datos transaccional | PostgreSQL | ACID, restricciones, MVCC, locks por fila e inspección con `pg_stat_activity` y `pg_locks`. |
+| Patrón de integración con Bancs | Workers por lotes (propuesta teórica) | Limitaría la presión sobre el core y permitiría reintentos y conciliación. No está desplegado en el MVP. |
 | Servicio de IA | Microservicio independiente (FastAPI) | Aislar el módulo de IA para ser consumido de forma asíncrona. |
-| Observabilidad | Grafana + Prometheus | Estándar de facto, bajo costo de operación, exportable a Grafana/Loki/Tempo. |
+| Observabilidad | Prometheus + logs JSON | Permite medir los dos servicios y correlacionar eventos con `trace_id`; los paneles y trazas distribuidas quedan como evolución. |
 | IaC | Docker Compose | Un solo comando (`docker compose up`) levanta todo el entorno de desarrollo. |
 
 ---
@@ -94,11 +94,28 @@ El worker reserva un trabajo con `FOR UPDATE SKIP LOCKED`, incrementa el intento
 
 SQL parametrizado, validación de importes/UUID, campos extra rechazados y respuestas de error sin detalles internos reducen errores e inyección. Las credenciales se inyectan por entorno y no se imprimen; la imagen corre sin privilegios de root. Los puertos publicados en localhost limitan acceso durante la demostración. No hay aún autenticación, autorización por cuenta, TLS ni rol SQL de mínimo privilegio; son requisitos pendientes antes de exponer el sistema y no capacidades ya implementadas.
 
-Los logs JSON registran éxito, rechazo, errores, commit y procesamiento IA. `trace_id` une API, transferencia y worker; no representa por sí solo una traza distribuida con spans. El nombre de operación SQL, `backend_pid`, duración y SQLSTATE permiten localizar esperas y deadlocks con `pg_stat_activity`. Las métricas no usan IDs como etiquetas, para evitar crecimiento de series por cada operación. Ver [observabilidad](observability.md) para consultas, alertas y diagnóstico.
+Los logs JSON registran éxito, rechazo, errores, commit y procesamiento IA. `trace_id` une API, transferencia y worker; no representa por sí solo una traza distribuida con spans. El nombre de operación SQL, `backend_pid`, duración y SQLSTATE permiten localizar esperas y deadlocks con `pg_stat_activity`. Las métricas no usan IDs como etiquetas, para evitar crecimiento de series por cada operación. Ver la [guía de respuesta a incidentes](incident-response.md) para consultas, alertas, diagnóstico y escalamiento.
 
 ## 5. Estrategia de Sincronización con Legacy Bancs
 
 **Problema**: Bancs es un sistema transaccional heredado, robusto pero poco flexible, que no puede recibir un alto volumen de consultas directas sin que su rendimiento se degrade.
+
+Esta sección es una **propuesta teórica**, como solicita el reto. El MVP usa PostgreSQL como ledger local de demostración y no se comunica con Bancs. En una implantación bancaria, Bancs seguiría siendo el sistema de registro del saldo oficial hasta que el negocio asigne explícitamente esa responsabilidad a otro componente.
+
+### Flujo propuesto
+
+1. La API validaría la solicitud, aplicaría idempotencia y guardaría la operación local junto con un evento de integración dentro de la misma transacción SQL. El patrón evita confirmar dinero sin dejar registro de lo que debe enviarse.
+2. Un worker leería eventos pendientes en lotes pequeños. Tendría límites de concurrencia y solicitudes por segundo para proteger Bancs durante los picos.
+3. Cada envío incluiría un identificador idempotente y un identificador de lote. Repetir el envío por timeout no debería crear otro movimiento en Bancs.
+4. Los errores temporales se reintentarían con espera exponencial y un pequeño valor aleatorio (*jitter*). Los rechazos permanentes pasarían a revisión operativa, sin repetirse indefinidamente.
+5. La respuesta de Bancs actualizaría un estado de sincronización separado del resultado técnico del request HTTP.
+6. Un proceso periódico compararía identificadores, importes y totales entre ambos sistemas. Las diferencias se reportarían para conciliación y nunca se corregirían silenciosamente.
+
+### Estados y consistencia
+
+El banco debe acordar qué significa “completada”. Si el saldo oficial depende de la confirmación de Bancs, la API debería responder `accepted/pending` y sólo pasar a `completed` después de esa confirmación. El `completed` inmediato del MVP demuestra atomicidad en PostgreSQL local; no significa liquidación confirmada por el core.
+
+La tabla de eventos de integración y el worker Bancs no se añaden a este incremento. Implementarlos sin un contrato real de Bancs inventaría respuestas, estados y reglas de conciliación, mientras que el lineamiento solicita explicar la estrategia.
 
 ## 6. Inteligencia Artificial: Implementación y Despliegue
 
@@ -238,4 +255,4 @@ El PID puede reutilizarse después de terminar una sesión; correlacionarlo con 
 
 Los bloqueos de cuenta se adquieren en orden UUID para evitar ciclos habituales entre transferencias opuestas. PostgreSQL sigue siendo quien detecta deadlocks de otras operaciones. Ante contención, el cliente recibe `503` y puede reintentar con la misma clave de idempotencia. Una cancelación no debe ejecutarse automáticamente sólo por detectar una consulta lenta: identificar primero la sesión y el impacto.
 
-Las reglas locales de alerta tienen umbrales iniciales para la demostración; necesitan ajustarse con una línea base. Prometheus no reúne logs ni crea spans: Grafana, Loki, OpenTelemetry y un canal de alertas son ampliaciones pendientes. La guía completa del incidente, escalamiento y post mortem del reto todavía debe desarrollarse.
+Las reglas locales de alerta tienen umbrales iniciales para la demostración; necesitan ajustarse con una línea base. Prometheus no reúne logs ni crea spans: paneles, agregación de logs, OpenTelemetry y un canal de alertas son ampliaciones posibles. La [guía de incidente](incident-response.md), las [consultas SQL](../scripts/incident_queries.sql) y la [plantilla de post mortem](postmortem-template.md) cubren el ejercicio operativo del reto.

@@ -1,0 +1,7 @@
+row_number,transaction_id,error_code
+5,not-a-uuid,invalid_uuid
+6,00000000-0000-4000-8000-000000000104,invalid_amount
+7,00000000-0000-4000-8000-000000000105,unsupported_currency
+8,00000000-0000-4000-8000-000000000106,invalid_timestamp
+9,,missing_required
+10,00000000-0000-4000-8000-000000000101,duplicate_transaction_id

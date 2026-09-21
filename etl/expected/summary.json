@@ -1,0 +1,14 @@
+{
+  "process_version": "1.0",
+  "rejections_by_code": {
+    "duplicate_transaction_id": 1,
+    "invalid_amount": 1,
+    "invalid_timestamp": 1,
+    "invalid_uuid": 1,
+    "missing_required": 1,
+    "unsupported_currency": 1
+  },
+  "total_processed": 3,
+  "total_read": 9,
+  "total_rejected": 6
+}

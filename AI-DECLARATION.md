@@ -1,13 +1,20 @@
-[![AI-DECLARATION: assist](https://img.shields.io/badge/䷼%20AI--DECLARATION-assist-fef9c3?labelColor=fef9c3)](https://ai-declaration.md)
+# Declaración de uso de inteligencia artificial
 
 ---
 version: "0.1.1"
-level: auto
+level: assist
 ---
 
-This format is based on [AI-DECLARATION.md](https://ai-declaration.md/en/0.1.1).
+Este proyecto recibió asistencia de **ChatGPT/Codex** durante su desarrollo. El formato toma como referencia [AI Declaration](https://ai-declaration.md/en/0.1.1).
 
-## Notes
+## Actividades asistidas
 
-- ChatGPT/Codex: asistencia en el modelado y revisión de la base de datos, decisiones de arquitectura y documentación.
-- ChatGPT/Codex: ayuda en la implementación del (`mode: mock`), sin llamadas a modelos reales de IA como Gemini/OpenAI.
+- revisión del DDL, seed y decisiones de concurrencia;
+- implementación y revisión de los microservicios;
+- elaboración de pruebas automatizadas;
+- configuración de Docker Compose y Prometheus;
+- asistencia en documentación;
+
+## Componentes afectados
+
+La asistencia alcanzó código y documentación en `database/`, `ms-transaction/`, `ms-inference-ai/`, `observability/`, `scripts/`, `docs/`

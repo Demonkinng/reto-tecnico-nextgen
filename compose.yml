@@ -24,7 +24,6 @@ services:
   ms-inference-ai:
     build: ./ms-inference-ai
     image: nextgen-inference-ai:local
-    profiles: ["ia"]
     environment:
       MOCK_DELAY_SECONDS: ${MOCK_DELAY_SECONDS:-0}
       MOCK_FAILURE_MODE: ${MOCK_FAILURE_MODE:-none}
@@ -41,7 +40,6 @@ services:
   transaction_worker:
     build: ./ms-transaction
     image: nextgen-transaction:local
-    profiles: ["ia"]
     command: ["python", "-m", "app.worker"]
     environment:
       <<: *transaction_environment

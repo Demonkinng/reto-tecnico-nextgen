@@ -1,47 +1,79 @@
-# Post-mortem — [Título del incidente]
+# Post mortem — [título del incidente]
 
-**Severidad:** SEV[1|2|3]
-**Fecha del incidente:** AAAA-MM-DD
-**Duración total:** [detección → resolución]
-**Autor(es):** 
+**Severidad:** SEV[1|2|3]  
+**Inicio UTC:** AAAA-MM-DD HH:MM  
+**Fin UTC:** AAAA-MM-DD HH:MM  
+**Duración:** [minutos]  
+**Autoría:** [nombres o roles]  
 **Estado:** Borrador / Revisado / Aprobado
 
-## 1. Resumen ejecutivo
-(2-3 líneas: qué pasó, a quién afectó, impacto en negocio)
+Este informe analiza el sistema y el proceso sin asignar culpa personal.
+
+## 1. Resumen
+
+[Qué ocurrió, a quién afectó, cuánto duró y cuál fue el estado final.]
 
 ## 2. Impacto
-- Transacciones afectadas / fallidas:
-- Usuarios impactados (estimado):
-- Duración de la degradación visible al usuario:
 
-## 3. Línea de tiempo (UTC)
-| Hora | Evento |
-|---|---|
-|  | Alerta disparada: ... |
-|  | Se confirma contención en `accounts` vía `pg_locks` |
-|  | Se termina sesión bloqueante `pid=...` |
-|  | Latencia vuelve a rango normal |
+- Transferencias completadas, rechazadas y con respuesta incierta:
+- Clientes o cuentas afectadas, usando datos agregados:
+- Impacto financiero confirmado:
+- Impacto en recomendaciones de IA:
+- Periodo visible para clientes:
 
-## 4. Causa raíz
-(No el síntoma — la causa de fondo. Ej: "una cuenta de nómina generó actualizaciones
-concurrentes sobre la misma fila sin cola de serialización, causando contención de
-locks que escaló a timeouts en cascada bajo el pico de quincena")
+## 3. Detección
 
-## 5. Qué funcionó bien
+- Primera alerta o reporte:
+- Métrica o log que permitió confirmar el incidente:
+- Tiempo desde el inicio hasta la detección:
+- Mejora necesaria en la detección:
+
+## 4. Línea de tiempo UTC
+
+| Hora | Evento, decisión o cambio de impacto | Evidencia |
+|---|---|---|
+| | Alerta recibida | Regla o reporte |
+| | Incidente clasificado y roles asignados | Registro operativo |
+| | Causa o bloqueador identificado | Consulta sanitizada |
+| | Mitigación aplicada | Acción y responsable |
+| | Servicio estabilizado | Métricas |
+| | Cierre y reconciliación | Resultado |
+
+## 5. Causa raíz
+
+[Explicar el mecanismo técnico y organizativo que permitió el incidente. “Hubo timeouts” describe un síntoma y no una causa.]
+
+## 6. Factores contribuyentes
+
+- Condiciones de tráfico o datos:
+- Diseño o configuración:
+- Detección y alertas:
+- Procedimientos y comunicación:
+
+## 7. Respuesta
+
+### Qué funcionó
+
 -
 
-## 6. Qué no funcionó / gaps detectados
+### Qué dificultó la recuperación
+
 -
 
-## 7. Acciones preventivas
-| Acción | Área | Dueño | Fecha objetivo |
-|---|---|---|---|
-| Serializar transferencias masivas hacia una misma cuenta destino | Código | | |
-| Particionar/aislar cuentas "hot" | Infraestructura | | |
-| Añadir alerta sobre `smartbancs_outbox_pending` con umbral | Observabilidad | | |
-| Runbook de incidente ensayado en game day | Operaciones | | |
+### Riesgos introducidos por la mitigación
 
-## 8. Anexos
-- Gráficas de métricas (latencia p99, `db_pool_in_use`, `outbox_pending`)
-- Salida de `scripts/incident_queries.sql` durante el incidente
-- `trace_id` de transacciones representativas afectadas
+-
+
+## 8. Acciones
+
+| Acción concreta | Prioridad | Dueño | Fecha objetivo | Criterio verificable de cierre | Estado |
+|---|---|---|---|---|---|
+| | Alta/Media/Baja | | | Prueba, métrica o documento que demuestra el cierre | Pendiente |
+
+## 9. Anexos
+
+- Gráficas de `http_request_duration_seconds`, `db_operation_duration_seconds` y `db_pool_wait_seconds`.
+- Conteos de `db_errors_total` y `transactions_total` durante el periodo.
+- Estado de `ai_jobs` y `ai_oldest_pending_age_seconds` si la IA fue afectada.
+- Salida sanitizada de [`scripts/incident_queries.sql`](../scripts/incident_queries.sql).
+- `trace_id` representativos sin datos personales.

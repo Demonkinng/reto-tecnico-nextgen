@@ -27,6 +27,9 @@ dist/
 htmlcov/
 coverage.xml
 
+# Salida local regenerable del ETL
+etl/output/
+
 # Registros locales
 *.log
 
