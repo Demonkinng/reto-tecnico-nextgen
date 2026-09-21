@@ -1,0 +1,36 @@
+# Variables de entorno y credenciales
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Entornos virtuales de Python
+.venv/
+venv/
+env/
+
+# Archivos generados por Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Cachés de pruebas y herramientas
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Reportes de cobertura
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Registros locales
+*.log
+
+# Archivos del sistema operativo
+.DS_Store
+Thumbs.db
+Desktop.ini
