@@ -1,0 +1,37 @@
+groups:
+  - name: transactions
+    rules:
+      - alert: TransactionApiUnavailable
+        expr: up{job="ms-transaction"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No se pueden obtener métricas de la API"
+      - alert: TransactionLatencyHigh
+        expr: histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{job="ms-transaction",route="/transactions",method="POST"}[5m]))) > 2
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "El percentil 95 de transferencias supera 2 segundos"
+      - alert: TransactionServerErrors
+        expr: sum(increase(http_requests_total{job="ms-transaction",route="/transactions",method="POST",status=~"5.."}[5m])) > 5
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Más de 5 errores de servidor en transferencias en 5 minutos"
+      - alert: DatabaseContention
+        expr: sum(increase(db_errors_total{kind=~"deadlock|lock_timeout|pool_exhausted"}[5m])) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "Se detectaron bloqueos o saturación del pool"
+      - alert: AiQueueDelayed
+        expr: ai_oldest_pending_age_seconds{job="transaction-worker"} > 60
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Hay recomendaciones pendientes durante más de un minuto"

@@ -9,4 +9,4 @@ This format is based on [AI-DECLARATION.md](https://ai-declaration.md/en/0.1.1).
 
 ## Notes
 
-- ChatGPT support on documentation.
+- ChatGPT/Codex: asistencia en el modelado y revisión de la base de datos, decisiones de arquitectura y documentación.
