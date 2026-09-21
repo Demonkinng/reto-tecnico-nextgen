@@ -2,7 +2,7 @@
 
 MVP local en Python 3.13, FastAPI y PostgreSQL. Permite transferencias en **centavos de USD**, evita dobles débitos y guarda una tarea de IA junto con cada transferencia. El worker consume el servicio de IA en un proceso separado.
 
-Este incremento implementa el microservicio transaccional y su consumidor HTTP de IA. El microservicio independiente de IA, el proveedor real, el ETL y la integración Bancs siguen pendientes. No se afirma capacidad de 10 000 transacciones/s: requiere pruebas de carga y dimensionamiento.
+Implementa el microservicio transaccional, su worker y un microservicio independiente de recomendaciones simuladas. El proveedor real, el ETL y la integración Bancs siguen pendientes. No se afirma capacidad de 10 000 transacciones/s: requiere pruebas de carga y dimensionamiento.
 
 ## Ejecutar
 
@@ -51,13 +51,13 @@ Validación: `422`; cuenta o recurso inexistente: `404`; saldo insuficiente/conf
 
 ## Worker e IA
 
-Sin worker, los trabajos permanecen `pending`; las transferencias se completan normalmente. Cuando exista el servicio independiente, configurar `AI_SERVICE_URL` en `.env` con la URL completa del endpoint e iniciar:
+Sin worker, los trabajos permanecen `pending`; las transferencias se completan normalmente. Para levantar también el worker y el mock funcional de IA:
 
 ```powershell
 docker compose --profile ia up --build -d
 ```
 
-Si IA corre en Windows fuera de Docker, utilizar por ejemplo `http://host.docker.internal:8002/recommendations`. El valor predeterminado apunta al futuro servicio `ms-inference-ai`; **no activar el perfil antes de tener ese endpoint**. El worker agotaría los intentos ante una URL inaccesible.
+El perfil `ia` incluye `ms-inference-ai`; no necesita API key ni configurar otra URL. Su [Swagger](http://localhost:8002/docs) y métricas están en el puerto `8002`. La API transaccional sigue en `8000`. Si previamente configuraste `AI_SERVICE_URL` para otro servidor, elimina esa sobrescritura para usar el mock incluido. Para un servicio compatible fuera de Docker puedes usar `http://host.docker.internal:8002/recommendations`.
 
 Contrato HTTP esperado, con cabecera `X-Trace-ID` y `POST`:
 
@@ -74,12 +74,12 @@ Respuesta `200` del servicio de IA:
 ```json
 {
   "transaction_id": "0e3d735e-9856-40a5-8ba6-cb9769e4dbe8",
-  "recommendation": "Texto producido por el servicio de IA.",
-  "mode": "api"
+  "recommendation": "Registra este movimiento para mantener actualizado tu seguimiento de gastos.",
+  "mode": "mock"
 }
 ```
 
-También se acepta `mode: "mock"` para una simulación explícita. La API transaccional no fabrica recomendaciones. El futuro servicio de IA debe manejar su propia clave Gemini/OpenAI y validar este contrato; no compartir credenciales del proveedor con el servicio de transacciones. El payload actual permite demostrar el flujo, pero no ofrece aún el contexto necesario para una personalización financiera completa.
+El servicio incluido siempre devuelve `mode: "mock"`: usa tres reglas deterministas según el monto y no llama a un modelo entrenado. El worker también admite `mode: "api"` para la integración futura, que deberá gestionar su propia clave Gemini/OpenAI. No se comparten secretos del proveedor con transacciones. El monto por sí solo no permite una personalización financiera completa. Ver [diseño y demostración del mock](docs/ai-service.md).
 
 Se permiten tres intentos totales. Timeout, errores de red, `429` y `5xx` se reintentan con esperas de 2 y 4 segundos; los demás errores HTTP y respuestas inválidas se marcan como fallidos. Una reserva vence a los 30 segundos para recuperar procesos interrumpidos. Las llamadas HTTP usan timeout de 5 segundos por fase de red. La entrega es **al menos una vez**: el futuro servicio IA debe deduplicar por `transaction_id` para evitar costes repetidos. Un fallo de IA no revierte dinero ya transferido.
 
@@ -90,7 +90,7 @@ docker compose --profile observability up -d
 docker compose logs -f ms_transaction
 ```
 
-[Prometheus](http://localhost:9090) recoge volumen, errores, duración HTTP/SQL, espera del pool y métricas de IA. Incluye reglas de latencia, errores, contención y retraso de tareas. Las alertas se consultan en Prometheus; no se ha configurado envío de notificaciones. El target del worker aparece `DOWN` si el perfil `ia` está apagado: no tiene alerta de caída en este incremento.
+[Prometheus](http://localhost:9090) recoge volumen, errores, duración HTTP/SQL, espera del pool y métricas de IA. Incluye reglas de latencia, errores, contención y retraso de tareas. Las alertas se consultan en Prometheus; no se ha configurado envío de notificaciones. Los targets del worker y del mock aparecen `DOWN` si el perfil `ia` está apagado: no tienen alerta de caída. Para levantar todo, usar `docker compose --profile ia --profile observability up --build -d`.
 
 Las operaciones de negocio se registran en JSON con `trace_id`, evento y servicio. Las operaciones SQL lentas/fallidas incluyen nombre de operación y PID de PostgreSQL; los errores SQL incluyen `sqlstate`. No se registran contraseñas, nombres, cuerpos de petición ni recomendaciones. `X-Trace-ID` permite correlacionar API, base y worker; no es todavía una traza distribuida OpenTelemetry con spans. Ver [guía de diagnóstico](docs/observability.md).
 
@@ -108,6 +108,25 @@ docker compose -f compose.test.yml down
 ```
 
 Incluyen dinero atómico, rollback, validación, duplicados simultáneos, transferencias en sentidos opuestos, bloqueo SQL, respuestas sanitizadas, reintentos y reservas de IA. Se utiliza PostgreSQL real y un servidor HTTP controlado en las pruebas; no se llama a Gemini/OpenAI. No son un benchmark de carga ni prueban integración con un proveedor real.
+
+Pruebas del servicio simulado, sin base de datos:
+
+```powershell
+.venv/Scripts/python.exe -m pip install -r ms-inference-ai/requirements-dev.txt
+.venv/Scripts/python.exe -m pytest -c ms-inference-ai/pytest.ini ms-inference-ai/tests -q
+```
+
+Ejecutar las suites de cada microservicio por separado: ambos tienen su propio paquete `app`. Para verificar los componentes con HTTP real y base desechable, después de terminar las suites:
+
+```powershell
+docker compose -f compose.test.yml --profile pipeline up --build -d --wait
+$env:TEST_DATABASE_URL = "postgresql://postgres:local_test_only@127.0.0.1:55432/smartbancs_test"
+$env:TEST_API_URL = "http://127.0.0.1:58000"
+.venv/Scripts/python.exe scripts/verify_pipeline.py
+docker compose -f compose.test.yml --profile pipeline down
+```
+
+El script crea una transferencia de un centavo en el entorno de prueba, verifica que el reintento no duplique el débito y espera la recomendación guardada. No ejecutarlo contra la API de desarrollo en `8000`. No ejecutar la suite transaccional mientras el worker de pruebas está activo: las pruebas vacían sus tablas. Para puertos de prueba personalizados, definir `TEST_DB_PORT`, `TEST_API_PORT` y `TEST_AI_PORT` antes de levantar el entorno; el script exige que las URLs coincidan con los puertos configurados.
 
 ## Detener
 
@@ -132,10 +151,12 @@ ms-transaction/
   tests/
   Dockerfile
 database/          # DDL y datos ficticios existentes
+ms-inference-ai/    # Mock independiente: app, tests y Dockerfile
+scripts/           # Verificación del recorrido completo en el entorno desechable
 observability/     # Configuración y alertas Prometheus
 docs/              # Justificación y guía operativa
 ```
 
 Es una organización pequeña por responsabilidades, cercana a una Minimal API: no agrega repositorios genéricos, interfaces ni arquitectura hexagonal. Ver [decisiones técnicas](docs/design-document.md).
 
-Limitaciones del entorno local: no hay autenticación/autorización, TLS ni roles de base con privilegio mínimo; Compose reutiliza el usuario local de PostgreSQL. Esto permite demostrar el flujo con datos ficticios, pero requiere resolver esos controles antes de exponerlo fuera de la máquina. También quedan pendientes prueba de carga, Bancs/ETL, servicio de IA, ciclo de vida del modelo y entregables de presentación del reto.
+Limitaciones del entorno local: no hay autenticación/autorización, TLS ni roles de base con privilegio mínimo; Compose reutiliza el usuario local de PostgreSQL. Esto permite demostrar el flujo con datos ficticios, pero requiere resolver esos controles antes de exponerlo fuera de la máquina. También quedan pendientes prueba de carga, Bancs/ETL, proveedor real, ciclo de vida del modelo y entregables de presentación del reto.

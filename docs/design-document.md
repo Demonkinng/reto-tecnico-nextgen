@@ -2,7 +2,8 @@
 
 ## 1. Objetivo y Alcance
 
-Este documento y el código que lo acompaña resuelven el reto técnico "SmartBancs App".
+Este documento y el código que lo acompaña resuelven el reto técnico "SmartBancs App", la cual es una
+plataforma orientada a procesar transacciones en tiempo real y ofrecer recomendaciones financieras personalizadas impulsadas por inteligencia artificial.
 
 ## 2. Stack Tecnológico Elegido
 
@@ -10,8 +11,7 @@ Este documento y el código que lo acompaña resuelven el reto técnico "SmartBa
 |---|---|---|
 | API transaccional | Python + FastAPI | I/O-bound, concurrencia con asyncio, tipado con Pydantic, fácil de instrumentar. |
 | Base de datos transaccional | PostgreSQL | ACID fuerte, índices, particionamiento, MVCC, soporte de observabilidad (`pg_stat_activity`, `pg_locks`). |
-| Cache | Redis | Baja latencia, soporta patrón pub/sub y colas de consumidores para desacoplar IA y sync con Bancs. |
-| Patrón de integración con Bancs | Outbox + workers batch | Evita saturar el core legado con escritura directa. |
+| Patrón de integración con Bancs | Workers batch | Evita saturar el core legado con escritura directa. |
 | Servicio de IA | Microservicio independiente (FastAPI) | Aislar el módulo de IA para ser consumido de forma asíncrona. |
 | Observabilidad | Grafana + Prometheus | Estándar de facto, bajo costo de operación, exportable a Grafana/Loki/Tempo. |
 | IaC | Docker Compose | Un solo comando (`docker compose up`) levanta todo el entorno de desarrollo. |
@@ -20,16 +20,7 @@ Este documento y el código que lo acompaña resuelven el reto técnico "SmartBa
 
 ## 3. Arquitectura de la App
 
-```mermaid
-flowchart LR
-    Client[Cliente] --> API[FastAPI: ms-transaction]
-    API -->|Commit: saldos + transferencia + tarea| DB[(PostgreSQL)]
-    Worker[Worker de transacciones] -->|Reserva breve de ai_jobs| DB
-    Worker -->|HTTP fuera de la transacción SQL| AI[Servicio IA: pendiente]
-    Worker -->|Resultado y estado| DB
-    Prom[Prometheus opcional] -->|Métricas| API
-    Prom -->|Métricas| Worker
-```
+![Arquitectura de SmartBancs](images/arquitectura-componentes.jpg)
 
 ## 4. Modelado de la Base de Datos
 
@@ -108,3 +99,143 @@ Los logs JSON registran éxito, rechazo, errores, commit y procesamiento IA. `tr
 ## 5. Estrategia de Sincronización con Legacy Bancs
 
 **Problema**: Bancs es un sistema transaccional heredado, robusto pero poco flexible, que no puede recibir un alto volumen de consultas directas sin que su rendimiento se degrade.
+
+## 6. Inteligencia Artificial: Implementación y Despliegue
+
+Se optó por un mock funcional mediante consumo HTTP, validación, persistencia por el worker, telemetría y fallos controlados. A continuación, se presentan los posibles escenarios para el modelo de IA:
+
+| Alternativa | Ventaja | Coste o limitación |
+|---|---|---|
+| Mock elegido | Demostración reproducible, sin cuentas externas ni coste de inferencia | No demuestra calidad de un modelo real |
+| Gemini o GPT por API | Permite demostrar integración con un modelo | Añade credenciales, cuotas, coste, latencia variable y evaluación de salidas |
+| Modelo propio | Mayor control del modelo | Requiere dataset, entrenamiento y recursos fuera de este incremento junior |
+
+### Diseño y justificación
+
+`POST /recommendations` recibe `transaction_id` UUID, `amount` entero positivo en centavos de USD y `currency: "USD"`. Rechaza campos adicionales y responde con el mismo ID, una recomendación y `mode: "mock"`. Mantiene el contrato que el worker ya valida, sin alterar la operación financiera ni el esquema SQL.
+
+```text
+ms-inference-ai/
+  app/
+    main.py       # HTTP, errores y simulación de demora/fallo
+    schemas.py    # Entrada y salida Pydantic
+    service.py    # Tres reglas de demostración
+    config.py     # Variables de entorno validadas
+    telemetry.py  # Logs JSON y métricas
+  tests/
+  Dockerfile
+```
+
+FastAPI y Pydantic conservan el estilo de transacciones. Se usan versiones iguales de dependencias comunes; no se agregan frameworks de agentes, SDK de proveedores ni interfaces abstractas para una sola implementación.
+
+### Ciclo de vida del modelo en producción
+
+El MVP actual utiliza reglas deterministas y, por lo tanto, no entrena un modelo ni aprende automáticamente de las transacciones. El siguiente ciclo de vida describe la evolución teórica hacia un modelo real. La primera opción sería consumir un modelo administrado, como Gemini o GPT, porque reduce la infraestructura necesaria para un equipo pequeño. El microservicio de IA conservaría el mismo contrato HTTP, de modo que el servicio transaccional y su worker no dependerían del proveedor elegido.
+
+#### Alimentación con nuevos datos
+
+Los datos se incorporarían mediante un proceso periódico y separado del flujo transaccional. Las transferencias confirmadas se extraerían desde una réplica o una zona analítica, se limpiarían mediante el proceso ETL y se transformarían en variables útiles, por ejemplo: rangos de importe, frecuencia de movimientos, categorías de gasto y variación frente al comportamiento histórico. No se consultaría Bancs directamente por cada recomendación, porque esto aumentaría su carga y acoplaría la IA al core legado.
+
+Antes de usar los datos se eliminarían identificadores directos, se aplicarían reglas de calidad y se conservarían únicamente los campos autorizados para el caso de uso. Los datos sensibles no se incluirían en el prompt si no son necesarios. Cada conjunto de datos tendría una versión, fecha de generación, reglas de transformación y métricas de calidad para poder reproducir una evaluación.
+
+Con un proveedor como Gemini o GPT no se reentrenaría inicialmente el modelo base. Los datos nuevos se utilizarían para actualizar el contexto, las reglas y un conjunto de evaluación controlado. Si en el futuro existieran suficientes datos validados y un objetivo medible, podría evaluarse un modelo especializado o *fine-tuning*. Esa decisión requeriría aprobación de seguridad, privacidad y riesgo del banco.
+
+#### Evaluación, versionado y despliegue
+
+Cada cambio de modelo, prompt, reglas o variables se trataría como una nueva versión. Antes de publicarla se ejecutaría con un conjunto de casos representativos y se compararían al menos: validez del formato, utilidad de la recomendación, ausencia de datos sensibles, respuestas inseguras, latencia y coste por solicitud. La salida del modelo siempre se validaría con el esquema Pydantic antes de almacenarla.
+
+La versión candidata se desplegaría primero en un entorno de pruebas y después mediante una liberación gradual, por ejemplo al 5 % del tráfico. Se compararía con la versión estable y sólo se ampliaría su uso si mantiene los umbrales definidos. Se conservaría la versión anterior para realizar un rollback rápido. Los registros deberían incluir la versión del modelo, prompt y reglas, pero no el contenido sensible enviado al proveedor.
+
+#### Monitoreo de *data drift*
+
+El *data drift* ocurre cuando los datos recibidos en producción cambian respecto de los utilizados para diseñar o evaluar la solución. Se compararía diaria o semanalmente la distribución de variables como importe, frecuencia, moneda, categoría y cantidad de transacciones por cliente contra una línea base. Para un MVP pueden utilizarse porcentajes por rango y el índice de estabilidad poblacional (PSI); no es necesario comenzar con una plataforma compleja.
+
+También se vigilaría el comportamiento de las salidas: proporción de cada tipo de recomendación, respuestas rechazadas por validación, contenido inseguro, tasa de recomendaciones repetidas y retroalimentación de usuarios. Esto permite detectar *concept drift*: los datos pueden parecer similares, pero las recomendaciones dejan de ser útiles.
+
+Los umbrales se definirían con datos reales y no de forma arbitraria. Por ejemplo, un cambio sostenido del PSI, un aumento de respuestas inválidas o una caída en la aceptación generaría una alerta para revisión. La respuesta sería analizar la causa, actualizar el conjunto de evaluación o las transformaciones y desplegar una nueva versión. No se actualizaría el modelo automáticamente con datos recientes sin validación humana, porque una recomendación financiera incorrecta puede afectar al cliente.
+
+#### Gestión del consumo de recursos
+
+Las recomendaciones continuarían fuera de la transacción financiera y serían procesadas por workers. Así se puede limitar la concurrencia hacia el proveedor, aplicar cuotas y escalar los workers sin aumentar las conexiones de la API transaccional. La cola persistente `ai_jobs`, el timeout y los tres intentos existentes evitan esperas indefinidas; la deduplicación por `transaction_id` impediría pagar dos veces por la misma inferencia.
+
+Para controlar coste y capacidad se medirían solicitudes, tokens de entrada y salida, latencia, errores, reintentos y coste estimado por recomendación. Se establecerían un tamaño máximo de prompt, una salida breve, límites de solicitudes por segundo y presupuestos diarios o mensuales. Cuando el proveedor alcance su cuota o presupuesto, el worker mantendría la tarea pendiente o la marcaría para revisión según la política definida, sin bloquear ni revertir la transferencia.
+
+Se elegiría el modelo más pequeño que cumpla los criterios de calidad y se reservarían modelos más costosos para casos que realmente lo necesiten. El escalamiento se basaría en la cantidad y antigüedad de trabajos pendientes, uso de CPU/memoria y límites del proveedor. Las métricas actuales de `ai_jobs`, latencia y errores constituyen la base operativa; en producción se añadirían consumo de tokens, coste y versión del modelo.
+
+```mermaid
+flowchart LR
+    Data[Transacciones confirmadas] --> ETL[ETL y anonimización]
+    ETL --> Eval[Datos versionados y conjunto de evaluación]
+    Eval --> Candidate[Modelo, prompt o reglas candidatas]
+    Candidate --> Tests[Calidad, seguridad, latencia y coste]
+    Tests --> Canary[Despliegue gradual]
+    Canary --> Monitor[Monitoreo de drift y recursos]
+    Monitor -->|Desviación o degradación| Eval
+    Monitor -->|Resultado estable| Production[Versión estable]
+    Production -->|Fallo crítico| Rollback[Rollback]
+```
+
+Este ciclo separa la actualización de IA del procesamiento del dinero. Una nueva versión puede cambiar o degradarse sin comprometer la atomicidad de las transferencias, y el mock actual continúa siendo una alternativa explícita para desarrollo y pruebas.
+
+## 7. Observabilidad
+
+### Qué mirar y por qué
+
+| Señal | Utilidad |
+|---|---|
+| `http_requests_total` por método, ruta y código | Separar tráfico, rechazos de negocio y errores de servidor |
+| `http_request_duration_seconds` | Identificar degradación de latencia; el objetivo del reto es menor a 2 s |
+| `transactions_total` por resultado | Separar transferencias nuevas, duplicadas, rechazadas y fallos de base |
+| `db_operation_duration_seconds` por operación | Identificar el paso SQL que consume tiempo |
+| `db_pool_wait_seconds` | Distinguir espera de conexión de una consulta lenta |
+| `db_errors_total` por tipo | Diferenciar deadlock, lock timeout, statement timeout y saturación del pool |
+| `ai_request_duration_seconds`, `ai_requests_total` | Detectar demora y fallos del servicio IA |
+| `ai_jobs`, `ai_oldest_pending_age_seconds` | Observar estado y acumulación de tareas en el worker |
+| `inference_requests_total` y métricas HTTP del job `ms-inference-ai` | Separar resultados del mock y su latencia de la observada por el worker |
+
+Los IDs no se usan como etiquetas métricas: crear una serie por transferencia consumiría memoria sin límite. Se reservan para logs. Se ejecuta un proceso Uvicorn por contenedor porque los contadores viven en memoria; al escalar, Prometheus debe recoger cada réplica. No aumentar `--workers` sin configurar antes el modo multiproceso de métricas.
+
+Logs críticos: `database_commit`, `transaction_completed`, `transaction_duplicate`, `operation_rejected`, `database_failure`, `db_operation_failed`, `db_operation_slow`, `unexpected_error`, `job_started`, `ai_call_finished` y `job_finished`. Los eventos del worker comparten el `trace_id` original. Una nueva petición HTTP de reintento puede tener otro trace; la respuesta mantiene la transacción y el trace original persistidos.
+
+El worker actualiza los totales de tareas cada 15 segundos; no recorre el historial después de cada trabajo. Ese agregado todavía crece con el historial, por lo que un sistema de mayor volumen necesitaría retención, estadísticas o un recolector independiente.
+
+### Consultas en Prometheus
+
+Transacciones nuevas por segundo:
+
+```promql
+sum(rate(transactions_total{job="ms-transaction",result="completed"}[5m]))
+```
+
+Latencia p95 de recepción de transferencias, incluidos errores y duplicados:
+
+```promql
+histogram_quantile(0.95, sum by (le) (
+  rate(http_request_duration_seconds_bucket{job="ms-transaction",route="/transactions",method="POST"}[5m])
+))
+```
+
+La métrica es una distribución, no una garantía de que cada transferencia tarde menos de dos segundos. `lock_timeout=500 ms` y `statement_timeout=1000 ms` limitan cada operación SQL, no la duración acumulada de toda la petición. El objetivo necesita pruebas de carga con datos, contención y recursos representativos.
+
+### Diagnosticar timeouts y bloqueos
+
+1. Ubicar el intervalo con errores/latencia y el `trace_id` afectado.
+2. Buscar `db_operation_failed` o `db_operation_slow`: `operation` indica el SQL lógico y `backend_pid` el proceso exacto; `55P03` señala lock timeout, `40P01` deadlock y `57014` cancelación por tiempo límite en esta configuración.
+3. Conectar como administrador a PostgreSQL y observar bloqueadores mientras el incidente está activo:
+
+```sql
+SELECT pid, application_name, state, wait_event_type, wait_event,
+       now() - query_start AS query_age,
+       pg_blocking_pids(pid) AS blocking_pids,
+       query
+FROM pg_stat_activity
+WHERE datname = current_database()
+  AND pid <> pg_backend_pid()
+ORDER BY query_start;
+```
+
+El PID puede reutilizarse después de terminar una sesión; correlacionarlo con la hora y `application_name` (`ms-transaction` o `transaction-worker`). El nombre de operación corresponde a la consulta en `service.py` o `worker.py`; por ejemplo, `lock_accounts` identifica la adquisición ordenada de bloqueos. La inspección de actividad SQL queda restringida a administradores porque otras consultas podrían contener datos sensibles.
+
+Los bloqueos de cuenta se adquieren en orden UUID para evitar ciclos habituales entre transferencias opuestas. PostgreSQL sigue siendo quien detecta deadlocks de otras operaciones. Ante contención, el cliente recibe `503` y puede reintentar con la misma clave de idempotencia. Una cancelación no debe ejecutarse automáticamente sólo por detectar una consulta lenta: identificar primero la sesión y el impacto.
+
+Las reglas locales de alerta tienen umbrales iniciales para la demostración; necesitan ajustarse con una línea base. Prometheus no reúne logs ni crea spans: Grafana, Loki, OpenTelemetry y un canal de alertas son ampliaciones pendientes. La guía completa del incidente, escalamiento y post mortem del reto todavía debe desarrollarse.

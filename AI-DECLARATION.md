@@ -10,3 +10,4 @@ This format is based on [AI-DECLARATION.md](https://ai-declaration.md/en/0.1.1).
 ## Notes
 
 - ChatGPT/Codex: asistencia en el modelado y revisión de la base de datos, decisiones de arquitectura y documentación.
+- ChatGPT/Codex: ayuda en la implementación del (`mode: mock`), sin llamadas a modelos reales de IA como Gemini/OpenAI.

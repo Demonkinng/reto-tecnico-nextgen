@@ -1,4 +1,13 @@
 groups:
+  - name: inference
+    rules:
+      - alert: InferenceServiceErrors
+        expr: sum(increase(http_requests_total{job="ms-inference-ai",route="/recommendations",status=~"5.."}[5m])) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "El servicio de recomendaciones está devolviendo errores"
   - name: transactions
     rules:
       - alert: TransactionApiUnavailable

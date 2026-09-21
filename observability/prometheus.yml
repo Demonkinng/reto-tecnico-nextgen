@@ -13,3 +13,7 @@ scrape_configs:
   - job_name: transaction-worker
     static_configs:
       - targets: ["transaction_worker:8001"]
+  # También requiere el perfil ia.
+  - job_name: ms-inference-ai
+    static_configs:
+      - targets: ["ms-inference-ai:8000"]
