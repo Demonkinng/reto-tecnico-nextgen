@@ -51,13 +51,13 @@ Validación: `422`; cuenta o recurso inexistente: `404`; saldo insuficiente/conf
 
 ## Worker e IA
 
-Sin worker, los trabajos permanecen `pending`; las transferencias se completan normalmente. Para levantar también el worker y el mock funcional de IA:
+El worker y el mock funcional de IA forman parte del Compose predeterminado. Para levantar el entorno completo:
 
 ```powershell
-docker compose --profile ia up --build -d
+docker compose up --build -d
 ```
 
-El perfil `ia` incluye `ms-inference-ai`; no necesita API key ni configurar otra URL. Su [Swagger](http://localhost:8002/docs) y métricas están en el puerto `8002`. La API transaccional sigue en `8000`. Si previamente configuraste `AI_SERVICE_URL` para otro servidor, elimina esa sobrescritura para usar el mock incluido. Para un servicio compatible fuera de Docker puedes usar `http://host.docker.internal:8002/recommendations`.
+`ms-inference-ai` no necesita API key ni configurar otra URL. Su [Swagger](http://localhost:8002/docs) y métricas están en el puerto `8002`. La API transaccional sigue en `8000`. Si previamente configuraste `AI_SERVICE_URL` para otro servidor, elimina esa sobrescritura para usar el mock incluido. Para un servicio compatible fuera de Docker puedes usar `http://host.docker.internal:8002/recommendations`.
 
 Contrato HTTP esperado, con cabecera `X-Trace-ID` y `POST`:
 
@@ -86,11 +86,11 @@ Se permiten tres intentos totales. Timeout, errores de red, `429` y `5xx` se rei
 ## Observabilidad
 
 ```powershell
-docker compose --profile observability up -d
+docker compose up --build -d
 docker compose logs -f ms_transaction
 ```
 
-[Prometheus](http://localhost:9090) recoge volumen, errores, duración HTTP/SQL, espera del pool y métricas de IA. Incluye reglas de latencia, errores, contención y retraso de tareas. Las alertas se consultan en Prometheus; no se ha configurado envío de notificaciones. Los targets del worker y del mock aparecen `DOWN` si el perfil `ia` está apagado: no tienen alerta de caída. Para levantar todo, usar `docker compose --profile ia --profile observability up --build -d`.
+[Prometheus](http://localhost:9090) recoge volumen, errores, duración HTTP/SQL, espera del pool y métricas de IA. Incluye reglas de latencia, errores, contención y retraso de tareas. Las alertas se consultan en Prometheus; no se ha configurado envío de notificaciones. El Compose actual no usa perfiles: `docker compose up --build -d` levanta todos los servicios y sus targets.
 
 Las operaciones de negocio se registran en JSON con `trace_id`, evento y servicio. Las operaciones SQL lentas/fallidas incluyen nombre de operación y PID de PostgreSQL; los errores SQL incluyen `sqlstate`. No se registran contraseñas, nombres, cuerpos de petición ni recomendaciones. `X-Trace-ID` permite correlacionar API, base y worker; no es todavía una traza distribuida OpenTelemetry con spans. Ver la [guía de diagnóstico y escalamiento](docs/incident-response.md).
 
@@ -107,15 +107,13 @@ Las reglas, códigos de rechazo y límites de privacidad están en la [guía del
 
 ## Pruebas automatizadas
 
-Requieren Python 3.13 y Docker. La base de pruebas es independiente, temporal y escucha en `55432`. **Las pruebas vacían sus tablas antes de cada caso**; usar exclusivamente esta base desechable. La configuración rechaza nombres de base que no terminen en `_test`.
+Requieren Python 3.13 y una instancia PostgreSQL desechable.
 
 ```powershell
 python -m venv .venv
 .venv/Scripts/python.exe -m pip install -r ms-transaction/requirements-dev.txt
-docker compose -f compose.test.yml up -d --wait
 $env:TEST_DATABASE_URL = "postgresql://postgres:local_test_only@127.0.0.1:55432/smartbancs_test"
 .venv/Scripts/python.exe -m pytest -c ms-transaction/pytest.ini ms-transaction/tests -q
-docker compose -f compose.test.yml down
 ```
 
 Incluyen dinero atómico, rollback, validación, duplicados simultáneos, transferencias en sentidos opuestos, bloqueo SQL, respuestas sanitizadas, reintentos y reservas de IA. Se utiliza PostgreSQL real y un servidor HTTP controlado en las pruebas; no se llama a Gemini/OpenAI. No son un benchmark de carga ni prueban integración con un proveedor real.
@@ -127,22 +125,12 @@ Pruebas del servicio simulado, sin base de datos:
 .venv/Scripts/python.exe -m pytest -c ms-inference-ai/pytest.ini ms-inference-ai/tests -q
 ```
 
-Ejecutar las suites de cada microservicio por separado: ambos tienen su propio paquete `app`. Para verificar los componentes con HTTP real y base desechable, después de terminar las suites:
-
-```powershell
-docker compose -f compose.test.yml --profile pipeline up --build -d --wait
-$env:TEST_DATABASE_URL = "postgresql://postgres:local_test_only@127.0.0.1:55432/smartbancs_test"
-$env:TEST_API_URL = "http://127.0.0.1:58000"
-.venv/Scripts/python.exe scripts/verify_pipeline.py
-docker compose -f compose.test.yml --profile pipeline down
-```
-
-El script crea una transferencia de un centavo en el entorno de prueba, verifica que el reintento no duplique el débito y espera la recomendación guardada. No ejecutarlo contra la API de desarrollo en `8000`. No ejecutar la suite transaccional mientras el worker de pruebas está activo: las pruebas vacían sus tablas. Para puertos de prueba personalizados, definir `TEST_DB_PORT`, `TEST_API_PORT` y `TEST_AI_PORT` antes de levantar el entorno; el script exige que las URLs coincidan con los puertos configurados.
+Ejecutar las suites de cada microservicio por separado: ambos tienen su propio paquete `app`. `scripts/verify_pipeline.py` se conserva como comprobación para un entorno desechable que exponga la API en `58000` y PostgreSQL en `55432`; no forma parte del guion de demostración ni debe ejecutarse contra la API de desarrollo en `8000`.
 
 ## Detener
 
 ```powershell
-docker compose --profile ia --profile observability down
+docker compose down
 ```
 
 Los volúmenes de desarrollo se conservan. No añadir `-v` si necesitas mantener los datos.
